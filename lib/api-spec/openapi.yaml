@@ -163,6 +163,41 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkspaceReply" }
+        "400":
+          description: Invalid question or blocked unsafe request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRequestError" }
+        "401":
+          description: Sign-in is required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRequestError" }
+        "404":
+          description: Conversation is missing or not owned by this user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRequestError" }
+        "429":
+          description: Workspace or AI provider rate limit; honor Retry-After
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRequestError" }
+        "502":
+          description: AI provider rejected the configuration or returned no answer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRequestError" }
+        "503":
+          description: AI configuration, provider access, or storage is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRequestError" }
+        "504":
+          description: AI response timed out
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRequestError" }
   /applications/{id}/history:
     get:
       operationId: listApplicationHistory
@@ -542,6 +577,12 @@ components:
       required: [content]
       properties:
         content: { type: string, minLength: 3, maxLength: 2000 }
+    WorkspaceRequestError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        code: { type: string }
     WorkspaceReply:
       type: object
       required: [message, sources, synthetic, escalation, securityStatus]

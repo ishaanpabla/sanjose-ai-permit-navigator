@@ -47,7 +47,8 @@ import type {
   WorkspaceMessageInput,
   WorkspacePrototypeSource,
   WorkspaceRecord,
-  WorkspaceReply
+  WorkspaceReply,
+  WorkspaceRequestError
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -849,7 +850,7 @@ return customFetch<WorkspaceReply>(getSendWorkspaceMessageUrl(id),
 
 export const getSendWorkspaceMessageMutationKey = () => ['sendWorkspaceMessage'] as const;
 
-export const getSendWorkspaceMessageMutationOptions = <TError = ErrorType<unknown>,
+export const getSendWorkspaceMessageMutationOptions = <TError = ErrorType<WorkspaceRequestError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendWorkspaceMessage>>, TError,SendWorkspaceMessageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof sendWorkspaceMessage>>, TError,SendWorkspaceMessageMutationVariables, TContext> => {
 
@@ -878,10 +879,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type SendWorkspaceMessageMutationResult = NonNullable<Awaited<ReturnType<typeof sendWorkspaceMessage>>>
     export type SendWorkspaceMessageMutationBody = BodyType<WorkspaceMessageInput>
-    export type SendWorkspaceMessageMutationError = ErrorType<unknown>
+    export type SendWorkspaceMessageMutationError = ErrorType<WorkspaceRequestError>
     export type SendWorkspaceMessageMutationVariables = {id: string;data: BodyType<WorkspaceMessageInput>}
 
-    export const useSendWorkspaceMessage = <TError = ErrorType<unknown>,
+    export const useSendWorkspaceMessage = <TError = ErrorType<WorkspaceRequestError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendWorkspaceMessage>>, TError,SendWorkspaceMessageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof sendWorkspaceMessage>>,

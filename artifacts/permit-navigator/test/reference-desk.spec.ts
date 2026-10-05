@@ -330,6 +330,75 @@ test('AI request errors are explained, the draft is preserved, and it can be ret
   expect(sendRequests).toBe(3);
 });
 
+test('typing never sends, rapid Enter sends once, and a history outage cannot hide the saved answer', async ({ page }) => {
+  const id = '42345678-1234-4234-8234-123456789abc';
+  const question = 'What should I check before opening a food business?';
+  const assistantText = 'Please confirm the kind of food business and location.';
+  const conversation = { id, title: 'Food business question', mode: 'research', createdAt: checkedAt, updatedAt: checkedAt };
+  let createRequests = 0;
+  let sendRequests = 0;
+  let completed = false;
+  let releaseSend!: () => void;
+  const sendGate = new Promise<void>(resolve => { releaseSend = resolve; });
+  await page.route('**/api/**', async route => {
+    const { pathname } = new URL(route.request().url());
+    const method = route.request().method();
+    if (pathname === '/api/workspace/conversations') {
+      if (method === 'POST') {
+        createRequests++;
+        return route.fulfill({ status: 201, json: conversation });
+      }
+      return route.fulfill({ json: createRequests ? [conversation] : [] });
+    }
+    if (pathname === `/api/workspace/conversations/${id}/messages`) {
+      if (method === 'POST') {
+        sendRequests++;
+        expect(route.request().postDataJSON()).toEqual({ content: question });
+        await sendGate;
+        completed = true;
+        return route.fulfill({ status: 201, json: {
+          message: { id: 'received-answer', role: 'assistant', content: assistantText, createdAt: checkedAt },
+          sources: [], synthetic: true, escalation: null, securityStatus: 'PII-filtered',
+        } });
+      }
+      return completed
+        ? route.fulfill({ status: 503, json: { error: 'History temporarily unavailable' } })
+        : route.fulfill({ json: [] });
+    }
+    if (pathname === '/api/workspace/records' || pathname === '/api/workspace/prototype-sources') {
+      return route.fulfill({ json: [] });
+    }
+    throw new Error(`Unexpected request: ${method} ${pathname}`);
+  });
+  try {
+    await page.goto('/test/harness.html');
+    await expect(page.getByText('What are you trying to do?')).toBeVisible();
+    const input = page.getByTestId('input-workspace-question');
+    await input.fill(question);
+    await input.press('Shift+Enter');
+    expect(createRequests).toBe(0);
+    expect(sendRequests).toBe(0);
+    await input.fill(question);
+    await input.evaluate(element => {
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await expect.poll(() => sendRequests).toBe(1);
+    expect(createRequests).toBe(1);
+    await expect(input).toBeDisabled();
+    await expect(input).toHaveValue(question);
+    await expect(page.getByTestId('button-mode-live')).toBeDisabled();
+    await expect(page.getByTestId('button-new-conversation')).toBeDisabled();
+  } finally {
+    releaseSend();
+  }
+  await expect(page.getByText(assistantText)).toBeVisible();
+  await expect(page.getByTestId('input-workspace-question')).toBeEnabled();
+  await expect(page.getByTestId('input-workspace-question')).toHaveValue('');
+  await expect(page.getByTestId('status-workspace-error')).toHaveCount(0);
+  expect(sendRequests).toBe(1);
+});
+
 test('users can cancel conversation deletion or delete the open conversation', async ({ page }) => {
   const conversationId = '12345678-1234-4234-8234-123456789abc';
   const conversation = {

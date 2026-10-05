@@ -53,3 +53,4 @@ export * from './workspacePrototypeSourceTopic';
 export * from './workspaceRecord';
 export * from './workspaceRecordFreshness';
 export * from './workspaceReply';
+export * from './workspaceRequestError';

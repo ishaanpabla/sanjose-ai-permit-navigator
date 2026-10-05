@@ -16,6 +16,7 @@ import {
   type WorkspaceConversationMode,
   type WorkspaceRecord,
   type WorkspaceReply,
+  type WorkspaceMessage,
 } from '@workspace/api-client-react';
 
 const prompts = [
@@ -94,6 +95,9 @@ export function AIWorkspace() {
   const [referenceOpen, setReferenceOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const initializedSelection = useRef(false);
+  // Mutation status updates on the next render; this lock blocks same-tick
+  // Enter/click submissions as well as the create-conversation/send transition.
+  const operationInFlight = useRef(false);
 
   const recordParams = { mode, ...(recordSearch.trim() ? { search: recordSearch.trim() } : {}) };
   const records = useListWorkspaceRecords(recordParams);
@@ -103,6 +107,7 @@ export function AIWorkspace() {
   const createConversation = useCreateWorkspaceConversation();
   const deleteConversation = useDeleteWorkspaceConversation();
   const sendMessage = useSendWorkspaceMessage();
+  const workspaceBusy = !!pendingText || createConversation.isPending || sendMessage.isPending;
 
   useEffect(() => {
     if (!initializedSelection.current && conversations.data) {
@@ -126,24 +131,34 @@ export function AIWorkspace() {
     ]);
   };
 
+  const createConversationForMode = async (nextMode: WorkspaceConversationMode) => {
+    const created = await createConversation.mutateAsync({ data: { mode: nextMode } });
+    queryClient.setQueryData(getListWorkspaceConversationsQueryKey(), current => (
+      Array.isArray(current) ? [created, ...current.filter(item => item.id !== created.id)] : [created]
+    ));
+    setSelectedId(created.id);
+    setMode(nextMode);
+    setMenuOpen(false);
+    return created.id;
+  };
+
   const startConversation = async (nextMode: WorkspaceConversationMode) => {
+    if (operationInFlight.current) return;
+    operationInFlight.current = true;
     setNotice('');
     try {
-      const created = await createConversation.mutateAsync({ data: { mode: nextMode } });
-      setSelectedId(created.id);
-      setMode(nextMode);
+      const id = await createConversationForMode(nextMode);
       setDraft('');
-      setMenuOpen(false);
-      await invalidate(created.id);
-      return created.id;
+      void invalidate(id).catch(() => setNotice('The conversation was created, but history could not refresh. Please reload it.'));
     } catch (error) {
       setNotice(requestFailureNotice(error, 'A new conversation could not be started. Please try again.'));
-      return null;
+    } finally {
+      operationInFlight.current = false;
     }
   };
 
   const deleteConversationItem = async (id: string) => {
-    if (selectedId === id && (sendMessage.isPending || createConversation.isPending)) {
+    if (operationInFlight.current) {
       setNotice('Wait for the current question to finish before deleting this conversation.');
       return;
     }
@@ -175,26 +190,28 @@ export function AIWorkspace() {
 
   const submit = async (text = draft) => {
     const content = text.trim();
-    if (content.length < 3 || content.length > 2000 || sendMessage.isPending || createConversation.isPending) return;
+    if (content.length < 3 || content.length > 2000 || operationInFlight.current) return;
+    operationInFlight.current = true;
+    const originalDraft = draft;
     setNotice('');
     setPendingText(content);
-    setDraft('');
-    let id = selectedId;
-    if (!id) id = await startConversation(mode);
-    if (!id) {
-      setPendingText('');
-      setDraft(content);
-      return;
-    }
     try {
+      const id = selectedId || await createConversationForMode(mode);
       const reply = await sendMessage.mutateAsync({ id, data: { content } });
       setReplies(previous => ({ ...previous, [reply.message.id]: reply }));
-      await invalidate(id);
+      // The returned answer is saved. Show it immediately, even if a separate
+      // history refresh fails; never mislabel a successful send as a failure.
+      queryClient.setQueryData<WorkspaceMessage[]>(getListWorkspaceMessagesQueryKey(id), current => (
+        [...(current ?? []).filter(message => message.id !== reply.message.id), reply.message]
+      ));
+      if (originalDraft.trim() === content) setDraft('');
+      void invalidate(id).catch(() => setNotice('Your answer was saved, but history could not refresh. Reload the conversation to try again.'));
     } catch (error) {
-      setDraft(content);
+      setDraft(originalDraft || content);
       setNotice(requestFailureNotice(error, 'Your question was not sent. It remains in the composer; please try again.'));
     } finally {
       setPendingText('');
+      operationInFlight.current = false;
     }
   };
 
@@ -209,12 +226,12 @@ export function AIWorkspace() {
         </div>
         <div className="ws-side-content">
           <div className="ws-nav-label">WORKSPACE</div>
-          <button className="ws-new" onClick={() => void startConversation(mode)} disabled={createConversation.isPending} data-testid="button-new-conversation"><Plus size={17}/>{createConversation.isPending ? 'Starting…' : 'New conversation'}<span>↗</span></button>
+          <button className="ws-new" onClick={() => void startConversation(mode)} disabled={workspaceBusy} data-testid="button-new-conversation"><Plus size={17}/>{createConversation.isPending ? 'Starting…' : 'New conversation'}<span>↗</span></button>
           <div className="ws-nav-label ws-mode-label">CHOOSE YOUR MODE</div>
-          <button className={`ws-mode ${mode === 'research' ? 'active' : ''}`} onClick={() => { setMode('research'); setSelectedId(null); setMenuOpen(false); }} data-testid="button-mode-research">
+          <button className={`ws-mode ${mode === 'research' ? 'active' : ''}`} disabled={workspaceBusy} onClick={() => { setMode('research'); setSelectedId(null); setMenuOpen(false); }} data-testid="button-mode-research">
             <BookOpen size={17}/><span><strong>Research</strong><small>Explore guidance & records</small></span>{mode === 'research' && <span className="ws-active-dot"/>}
           </button>
-          <button className={`ws-mode ${mode === 'live' ? 'active' : ''}`} onClick={() => { setMode('live'); setSelectedId(null); setMenuOpen(false); }} data-testid="button-mode-live">
+          <button className={`ws-mode ${mode === 'live' ? 'active' : ''}`} disabled={workspaceBusy} onClick={() => { setMode('live'); setSelectedId(null); setMenuOpen(false); }} data-testid="button-mode-live">
               <FileClock size={17}/><span><strong>Sample reference</strong><small>Explore fictional examples</small></span>{mode === 'live' && <span className="ws-active-dot"/>}
           </button>
             <p className="ws-mode-note">Sample references are synthetic stand-ins, not City publications. Real City links are for independent verification only.</p>
@@ -224,7 +241,7 @@ export function AIWorkspace() {
             {conversations.isError && <div className="ws-side-error">History unavailable. <button onClick={() => void conversations.refetch()} data-testid="button-retry-history">Retry</button></div>}
             {!conversations.isLoading && !conversations.isError && !conversations.data?.length && <p className="ws-side-empty">Your questions will be saved here.</p>}
             {conversations.data?.map(item => <div key={item.id} className="ws-history-row">
-              <button className={`ws-history-item ${selectedId === item.id ? 'selected' : ''}`} onClick={() => { setSelectedId(item.id); setMode(item.mode); setMenuOpen(false); setNotice(''); }} data-testid={`button-conversation-${item.id}`}>
+              <button className={`ws-history-item ${selectedId === item.id ? 'selected' : ''}`} disabled={workspaceBusy} onClick={() => { setSelectedId(item.id); setMode(item.mode); setMenuOpen(false); setNotice(''); }} data-testid={`button-conversation-${item.id}`}>
                 <MessageSquareText size={15}/><span><strong>{item.title || 'Untitled conversation'}</strong><small>{dateLabel(item.updatedAt)} · {item.mode}</small></span>
               </button>
               <button
@@ -259,7 +276,7 @@ export function AIWorkspace() {
               <div className="ws-trust-row"><div><LockKeyhole size={15}/><span>Simulated secure tool gateway</span></div><div><BookOpen size={15}/><span>{mode === 'live' ? 'Fictional, versioned sample documents' : 'Sample research records'}</span></div></div>
 
             {notice && <div className={`ws-alert ${notice === 'Conversation deleted.' ? 'ws-alert-success' : ''}`} role={notice === 'Conversation deleted.' ? 'status' : 'alert'} data-testid="status-workspace-error">{notice === 'Conversation deleted.' ? <CheckCircle2 size={17}/> : <AlertTriangle size={17}/>}<span>{notice}</span><button onClick={() => setNotice('')} aria-label="Dismiss message" data-testid="button-dismiss-error"><X size={15}/></button></div>}
-            {messages.isError && selectedId && <div className="ws-error-state" role="alert"><AlertTriangle size={24}/><h2>We couldn't open this conversation.</h2><p>Your history is still here. Try loading it again.</p><button onClick={() => void messages.refetch()} data-testid="button-retry-messages">Try again <ArrowRight size={15}/></button></div>}
+            {messages.isError && selectedId && <div className="ws-error-state" role="alert"><AlertTriangle size={24}/><h2>{messages.data?.length ? "History couldn't refresh." : "We couldn't open this conversation."}</h2><p>{messages.data?.length ? "Showing the messages already received. Your saved answer is not a failed submission." : "Your history is still here. Try loading it again."}</p><button onClick={() => void messages.refetch()} data-testid="button-retry-messages">Try again <ArrowRight size={15}/></button></div>}
             {messages.isLoading && selectedId && !pendingText && <div className="ws-message-skeleton"><div/><div/><div/></div>}
             {!selectedId && !pendingText && <div className="ws-intro"><div className="ws-intro-mark"><CircleHelp size={24} strokeWidth={1.6}/></div><h2>What are you trying to do?</h2><p>Tell us about the business you're opening or the space you're changing. We'll help you identify questions to ask and records worth checking.</p><div className="ws-prompt-list">{prompts.map((prompt, index) => <button key={prompt.label} onClick={() => void submit(prompt.question)} disabled={sendMessage.isPending || createConversation.isPending} data-testid={`button-prompt-${index}`}><span>0{index + 1}</span><strong>{prompt.label}</strong><ArrowRight size={17}/></button>)}</div></div>}
             {selectedId && !pendingText && !messages.isLoading && !messages.isError && !messages.data?.length && <div className="ws-intro ws-intro-small"><div className="ws-intro-mark"><MessageSquareText size={23}/></div><h2>A new conversation.</h2><p>Start with your business type, your location, and what you plan to change. Avoid sharing sensitive personal information.</p><div className="ws-prompt-list">{prompts.map((prompt, index) => <button key={prompt.label} onClick={() => void submit(prompt.question)} disabled={sendMessage.isPending} data-testid={`button-empty-prompt-${index}`}><span>0{index + 1}</span><strong>{prompt.label}</strong><ArrowRight size={17}/></button>)}</div></div>}
@@ -267,7 +284,7 @@ export function AIWorkspace() {
                const reply = replies[message.id];
                 return <div className={`ws-message ws-message-${message.role}`} key={message.id} data-testid={`message-${message.id}`}><div className="ws-avatar">{message.role === 'assistant' ? 'PN' : 'YOU'}</div><div className="ws-message-body"><div className="ws-message-meta"><strong>{message.role === 'assistant' ? 'Permit Navigator' : 'You'}</strong><span>{timeLabel(message.createdAt)}</span></div><div className="ws-message-content">{message.role === 'assistant' ? <AnswerText content={message.content}/> : message.content}</div>{reply && <div className="ws-reply-detail"><div className="ws-reply-security"><ShieldCheck size={14}/> Gateway status: {reply.securityStatus}</div>{reply.synthetic && <SyntheticBadge />}{reply.escalation && <div className="ws-escalation" data-testid={`status-escalation-${message.id}`}><AlertTriangle size={18}/><div><strong>Flagged in workspace review queue — no email confirmed</strong><p>{reply.escalation}</p></div></div>}{reply.sources.length > 0 && <div className="ws-citations"><span>SOURCES REFERENCED · {reply.sources.length}</span>{reply.sources.map(source => <RecordCard key={source.id} record={source} compact />)}</div>}</div>}</div></div>;
             })}{pendingText && <><div className="ws-message ws-message-user" data-testid="pending-workspace-question"><div className="ws-avatar">YOU</div><div className="ws-message-body"><div className="ws-message-meta"><strong>You</strong><span>Sending</span></div><div className="ws-message-content">{pendingText}</div></div></div><div className="ws-message ws-message-assistant" data-testid="workspace-response-loading" role="status" aria-live="polite"><div className="ws-avatar">PN</div><div className="ws-message-body"><div className="ws-message-meta"><strong>Permit Navigator</strong><span>Researching</span></div><div className="ws-answer-skeleton"><i/><i/><i/></div></div></div></>}<div ref={bottomRef}/></div>}
-              <div className="ws-composer-wrap"><form className="ws-composer" onSubmit={event => { event.preventDefault(); void submit(); }}><label htmlFor="ws-question">ASK THE WORKSPACE</label><textarea id="ws-question" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} placeholder="Describe your business or ask about a permit…" maxLength={2000} rows={2} data-testid="input-workspace-question"/><div className="ws-composer-bottom"><span>Don't include sensitive personal information. Enter to send · Shift+Enter for a new line</span><button type="submit" disabled={draft.trim().length < 3 || sendMessage.isPending || createConversation.isPending} data-testid="button-send-workspace-message">{sendMessage.isPending ? 'Working…' : 'Ask question'}<Send size={15}/></button></div></form><p className="ws-composer-disclaimer">This workspace does not connect to a live City staff system.</p></div>
+              <div className="ws-composer-wrap"><form className="ws-composer" onSubmit={event => { event.preventDefault(); void submit(); }}><label htmlFor="ws-question">ASK THE WORKSPACE</label><textarea id="ws-question" value={draft} disabled={workspaceBusy} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} placeholder="Describe your business or ask about a permit…" maxLength={2000} rows={2} data-testid="input-workspace-question"/><div className="ws-composer-bottom"><span>Don't include sensitive personal information. Enter to send · Shift+Enter for a new line</span><button type="submit" disabled={draft.trim().length < 3 || workspaceBusy} data-testid="button-send-workspace-message">{workspaceBusy ? 'Working…' : 'Ask question'}<Send size={15}/></button></div></form><p className="ws-composer-disclaimer">This workspace does not connect to a live City staff system.</p></div>
           </main>
 
            <aside className={`ws-reference ${referenceOpen ? 'ws-reference-open' : ''}`}><div className="ws-reference-inner">

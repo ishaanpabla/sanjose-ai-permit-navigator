@@ -9,7 +9,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "test:public-permits": "node --import tsx --test test/public-permit-dates.test.mjs",
     "test:applications": "NODE_ENV=test node --import tsx --test test/applications-access.test.mjs",
-    "test:workspace": "NODE_ENV=test node --import tsx --test test/workspace-escalations.test.mjs",
+    "test:workspace": "NODE_ENV=test node --import tsx --test test/workspace-*.test.mjs",
     "test:application-documents": "NODE_ENV=test node --import tsx --test test/application-documents.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

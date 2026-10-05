@@ -164,6 +164,11 @@ export interface WorkspaceMessageInput {
   content: string;
 }
 
+export interface WorkspaceRequestError {
+  error: string;
+  code?: string;
+}
+
 export interface WorkspaceReply {
   message: WorkspaceMessage;
   sources: WorkspaceRecord[];
