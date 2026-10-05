@@ -1,0 +1,52 @@
+### CRITICAL BUG FIX: "Your question was not sent. Nothing was lost; please try again."
+
+#### Objective
+Investigate and resolve the issue where typing/submitting a question in the "ASK THE WORKSPACE" section of the AI Workspace fails immediately with the message:
+"Your question was not sent. Nothing was lost; please try again."
+
+---
+
+### STEP 1: COMPREHENSIVE DIAGNOSTIC
+
+Perform a full system diagnostic before making code changes:
+
+1. **Frontend & Event Handler Audit**
+   - Locate the input component and submit handler for the "ASK THE WORKSPACE" chat/input component.
+   - Trace the exact trigger conditions that produce the error message `"Your question was not sent. Nothing was lost; please try again."`.
+   - Inspect event listeners, state management, and form submit events to ensure keypresses or submissions aren't prematurely firing validation errors or hitting unhandled promise rejections.
+
+2. **Network & Endpoint Analysis**
+   - Check the API request payload, route target, and headers sent when a query is submitted.
+   - Verify if the client is calling an invalid/unreachable endpoint, experiencing missing authentication/session tokens, or failing CORS checks.
+
+3. **Backend & AI Service Diagnostics**
+   - Check server-side route handlers, controller logic, or WebSocket connections handling the AI query.
+   - Verify environment variables (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or custom endpoint configurations). Ensure key loading, model naming, and client initialization do not throw unhandled exceptions.
+   - Inspect server logs for rate limiting, context window overruns, or payload parsing errors.
+
+---
+
+### STEP 2: ROOT CAUSE FIX & IMPLEMENTATION
+
+Based on the diagnostic findings:
+
+1. **Fix Client-Side Error Handling & Submission Flow**
+   - Ensure the submission handler properly captures the user's input, formats the request payload, and handles async state correctly (loading, error, success).
+   - Prevent duplicated, empty, or unthrottled rapid-fire network requests on keystroke/submit.
+
+2. **Fix Server-Side Logic & External API Calls**
+   - Update backend handler to gracefully process requests, wrap external API calls in robust `try/catch` blocks, and return distinct, actionable HTTP status codes and error bodies.
+   - Fall back safely if context retrieval or vector store indexing fails.
+
+3. **Validate Environment Variables & Configurations**
+   - Ensure all required API keys, model parameters, and base URLs are set and accessible in the runtime environment.
+
+---
+
+### STEP 3: VERIFICATION
+
+1. Run the server and test typing in the "ASK THE WORKSPACE" input field.
+2. Submit test questions and confirm:
+   - The message sends without triggering the error banner.
+   - Streaming or static AI responses load as expected.
+   - Error handling fails gracefully with specific error details if API keys are absent or network requests fail.
